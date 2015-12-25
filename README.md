@@ -12,5 +12,5 @@ This is the easiest to set up. Just drop the file `gamestate_integration_console
 ##Python Listen server
 This was run on python 2.7, it can probably run on python 3.X with some slight modification. If you need to change the listen port, change that here and in CS. You will also need to set the Serial port in here, by default it is COM3, but yours may be different.
 
-##Arduino timer
-The arduino code I used is attached, but will likely require heavy modification from you. The concept as a whole is simple, wait until you recieve a message over serial, then start a 40 second (40,000 millisecond) timer, displaying it on a seven segment display. 
+## Arduino code & Hardware
+
