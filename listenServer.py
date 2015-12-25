@@ -1,4 +1,3 @@
-
 import SimpleHTTPServer
 import SocketServer
 import logging
@@ -8,75 +7,184 @@ import sys
 import json
 import signal
 
-PORT = 3000
-planted = False
+# 1. Write a countdownMethod with following arguments (countdown duration in seconds) 2. Give this meathod id 2. Fix the bomb plant method
+"""
+About this code:
+All of the methods
+"""
 
-#If we ctrl+C out of python, make sure we close the serial port first
-#handler catches and closes it
+PORT = 3000
+
+# If we ctrl+C out of python, make sure we close the serial port first
+# handler catches and closes it
 def signal_handler(signal, frame):
-    ser.close()
+    ####ser.close()
     sys.exit(0)
 
 
-
 class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
+    score_ct = 0
+    score_t = 0
+    # stores the number of kills player got in one round
+    round_kills = 0
+
+
+    def disp_start_countdown(self, serial_cmd=2, countdown_duration=15):  # countdown until freezetime ends
+        serial_string = ("%d,%d;") % (serial_cmd, countdown_duration)
+        ####ser.write(serial_string)
+
+    def disp_stop_countdown(self, serial_cmd=3):
+        serial_string = ("%d;") % (serial_cmd)
+        ####ser.write(serial_string)
+
+    def disp_score(self, jsonDict, serial_cmd=4, disp_duration=6, score_ct=0, score_t=0):
+        serial_string = ("%d,%d,%d,%d;") % (serial_cmd, disp_duration, score_ct, score_t)
+        ####ser.write(serial_string)
+
+    def update_team_scores(self, jsonDict):
+        # will parse team scores to global variables so that other methods can access this data more easily
+        if 'map' in jsonDict:  # get ct and t team scores
+            scores = jsonDict['map']  # get map object/dict
+            self.score_ct = int(scores['team_ct']["score"])  # map >> team_ct >> score
+            self.score_t = int(scores['team_t']["score"])
+
+    def get_condition_object(self, jsonDict, parent_object, child_object, childs_condition):
+        if parent_object in jsonDict:
+            temp = jsonDict[parent_object]  # checks whether child object can be found in the parent string
+            if child_object in temp:
+                if temp[child_object] == childs_condition:
+                    return True
+                else:
+                    return False
+            else:
+                return False
+        else:
+            return False
+
+    def get_from_super_object(self, jsonDict, super_parent_object, parent_object, child_object, childs_condition):
+        if super_parent_object in jsonDict:
+            return self.get_condition_object(jsonDict[super_parent_object], parent_object, child_object,
+                                             childs_condition)
+        else:
+            return False
+
+    def get_int_object(self, jsonDict, super_parent_object, parent_object, child_object):
+        if super_parent_object in jsonDict:
+            super_parent = jsonDict[super_parent_object]
+            if parent_object in super_parent:
+                parent = super_parent[parent_object]
+                if child_object in parent:
+                    return int(parent[child_object])
+                else:
+                    return -1
+            else:
+                return -1
+        else:
+            return -1
+
+    # this is a bomb plant trigger it is fired once per round, remember bomb can also be planted after time runs out
+    def bomb_planted(self, jsonDict):
+        return self.get_from_super_object(jsonDict, 'added', 'round', 'bomb', True)
+
+    def freezetime_started(self, jsonDict):  # will return true if freeztime occured
+        return self.get_from_super_object(jsonDict, 'previously', 'round', 'phase', 'over') and \
+               self.get_condition_object(jsonDict, 'round', 'phase', 'freezetime')
+
+    # Every time round ends this will return true:
+    # (round time ran out, bomb defused, bomb exploded, all ct killed, all t killed)
+    def round_over(self, jsonDict):
+        return self.get_from_super_object(jsonDict, 'previously', 'round', 'phase', 'live') and \
+               self.get_condition_object(jsonDict, 'round', 'phase', 'over')
+
+    # *******************************************************************
+    def bomb_defused(self, jsonDict):
+        return self.get_condition_object(jsonDict, 'round', 'bomb', 'defused')
+
+    def bomb_exploded(self, jsonDict):
+        return self.get_condition_object(jsonDict, 'round', 'bomb', 'exploded')
+
+    def ct_win(self, jsonDict):
+        return self.get_condition_object(jsonDict, 'round', 'win_team', 'CT')
+
+    def t_win(self, jsonDict):
+        return self.get_condition_object(jsonDict, 'round', 'win_team', 'T')
+
+    # *******************************************************************
+
+    def player_got_kill(self, jsonDict):
+        if 'previously' in jsonDict:
+            prev_round_kills = self.get_int_object(jsonDict['previously'], 'player', 'state', 'round_kills')
+            if prev_round_kills == -1:
+                return False
+            # get number of frags received current round by the player spectated
+            self.round_kills = self.get_int_object(jsonDict, 'player', 'state', 'round_kills')
+            if self.round_kills - prev_round_kills > 0:
+                return True
+            else:
+                return False
+        else:
+            return False
+
+    # freezetime is over meaning that new round time began
+    def freezetime_over(self, jsonDict):
+        return self.get_from_super_object(jsonDict, 'previously', 'round', 'phase', 'freezetime') and \
+               self.get_condition_object(jsonDict, 'round', 'phase', 'live')
+
     def do_GET(self):
         SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
 
-
-    #SimpleHTTPServer doesn't handle post by default. Hacked up way to do it here
+    # SimpleHTTPServer doesn't handle post by default. Hacked up way to do it here
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         jsonString = str(self.rfile.read(length))
-        print jsonString
+        #print jsonString
         print "---"
         jsonDict = json.loads(jsonString)
-        #From here we have a JSON dict, that has whatever data CS is sending
 
-        #For the timer, all we care about is the the 'round' key 
+        self.update_team_scores(jsonDict)
 
-        if 'round' in jsonDict:
-            rounds = jsonDict['round']
-            if 'bomb' in rounds:
-                #If bomb has been planted, then send the 'P' message
-                if rounds['bomb'] == "planted":
-                    planted = True
-                    print "Bomb has been planted"
-                    ser.write('P')
-                #If bomb has been defused, then send the 'C' message
-                if rounds['bomb'] == "defused":
-                    planted = False
-                    ser.write('C')
-                    print "bomb has been defused"
+        if self.freezetime_started(jsonDict):  # freezetime event occured lets do something
+            self.disp_start_countdown()
+            print " AT FREEZE TIME - CT:%d | T:%d" % (self.score_ct, self.score_t)
 
-            #if the round ends, either bomb exploded or everyone died. 
-            #Send the 'C' message to stop timer.
-            if 'previously' in jsonDict:
-                if 'round' in jsonDict['previously']:
-                    if 'bomb' in jsonDict['previously']['round']:
-                        planted = False
-                        print "Round ran out"
-                        ser.write('C')
-                
-        #not sure if a response is really required. Send it anyway
-        response = bytes("This is the response.") #create response
+        # This will notify you when freezetime is over
+        if self.freezetime_over(jsonDict):
+            print "PICK UP YOUR WEAPONS AND FIGHT!"
 
-        self.send_response(200) #create header
+        if self.player_got_kill(jsonDict):
+            print 'YOU GOT A KILL, # of enemies killed this round: ', self.round_kills
+
+        if self.bomb_planted(jsonDict):
+            print "BOMB HAS BEEN PLANTED!"
+
+        # round over event will occur on the following cases:
+        # (round time ran out, bomb defused, bomb exploded, all ct killed, all t killed)
+        # all of the events below are nested in order to get greater efficiency in code you can call all of the methods independently as well
+        if self.round_over(jsonDict):
+            if self.bomb_defused(jsonDict):
+                print "CT DEFUSED THE BOMB"
+            elif self.bomb_exploded(jsonDict):
+                print "T DETONATED THE BOMB"
+            elif self.ct_win(jsonDict):
+                print "CT SHOT ALL THE T OR TIME RAN OUT"
+            elif self.t_win(jsonDict):  # elif is used for some efficiency
+                print "T SHOT ALL THE CT"
+
+        # Sends a response to your game, this is required
+        response = bytes("This is the response.")  # create response
+        self.send_response(200)  # create header
         self.send_header("Content-Length", str(len(response)))
         self.end_headers()
-        self.wfile.write(response) #send response
+        self.wfile.write(response)  # send response
 
 
 Handler = ServerHandler
-#On windows, Serial ports are usually COM1-3
-#On mac/linux this will be different
-ser = serial.Serial('COM3')
-#Set up our handler for ctrl+c
+####ser = serial.Serial('COM3')
+# Set up our handler for ctrl+c
 signal.signal(signal.SIGINT, signal_handler)
 
-#Start server
+# Start server
 httpd = SocketServer.TCPServer(("", PORT), Handler)
 
-
-#Run server
+# Run server
 httpd.serve_forever()
