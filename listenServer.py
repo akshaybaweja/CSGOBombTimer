@@ -7,20 +7,19 @@ import sys
 import json
 import signal
 
-# 1. Write a countdownMethod with following arguments (countdown duration in seconds) 2. Give this meathod id 2. Fix the bomb plant method
 """
-About this code:
-All of the methods
+Known issues:
+1. On the first round of the game no game start data can be received(running at freezetime, freeztime over)
 """
 
 PORT = 3000
+first_call = True
 
 # If we ctrl+C out of python, make sure we close the serial port first
 # handler catches and closes it
 def signal_handler(signal, frame):
-    ####ser.close()
+    ser.close()
     sys.exit(0)
-
 
 class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     score_ct = 0
@@ -28,18 +27,29 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     # stores the number of kills player got in one round
     round_kills = 0
 
-
-    def disp_start_countdown(self, serial_cmd=2, countdown_duration=15):  # countdown until freezetime ends
+    def disp_bomb_planted(self, serial_cmd=0, countdown_duration=40):  # countdown until freezetime ends
         serial_string = ("%d,%d;") % (serial_cmd, countdown_duration)
-        ####ser.write(serial_string)
+        ser.write(serial_string)
 
-    def disp_stop_countdown(self, serial_cmd=3):
+    def disp_start_countdown(self, serial_cmd=1, countdown_duration=15):  # countdown until freezetime ends
+        serial_string = ("%d,%d;") % (serial_cmd, countdown_duration)
+        ser.write(serial_string)
+
+    def disp_stop_countdown(self, serial_cmd=2):
         serial_string = ("%d;") % (serial_cmd)
-        ####ser.write(serial_string)
+        ser.write(serial_string)
 
-    def disp_score(self, jsonDict, serial_cmd=4, disp_duration=6, score_ct=0, score_t=0):
-        serial_string = ("%d,%d,%d,%d;") % (serial_cmd, disp_duration, score_ct, score_t)
-        ####ser.write(serial_string)
+    def disp_got_kill(self, serial_cmd=3):
+        serial_string = ("%d;") % (serial_cmd)
+        ser.write(serial_string)
+
+    def disp_score(self, serial_cmd=4, score_ct=0, score_t=0):
+        serial_string = ("%d,%d,%d;") % (serial_cmd, score_ct, score_t)
+        ser.write(serial_string)
+
+    def disp_init(self, serial_cmd=5, run=1):  # turn on the display and send let him know that game has started
+        serial_string = ("%d,%d;") % (serial_cmd, run)  # 1 inits the game display, 0 disables game display
+        ser.write(serial_string)
 
     def update_team_scores(self, jsonDict):
         # will parse team scores to global variables so that other methods can access this data more easily
@@ -51,7 +61,7 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def get_condition_object(self, jsonDict, parent_object, child_object, childs_condition):
         if parent_object in jsonDict:
             temp = jsonDict[parent_object]  # checks whether child object can be found in the parent string
-            if child_object in temp:
+            if child_object in temp:  # error occurs in this live when leaving the game investigate json
                 if temp[child_object] == childs_condition:
                     return True
                 else:
@@ -130,6 +140,19 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
         return self.get_from_super_object(jsonDict, 'previously', 'round', 'phase', 'freezetime') and \
                self.get_condition_object(jsonDict, 'round', 'phase', 'live')
 
+    def on_first_run(self, jsonDict):
+        global first_call
+        if first_call:
+            self.disp_init()
+            if (self.get_condition_object(jsonDict, 'round', 'phase', 'freezetime')):  # @freeze-time
+                self.disp_start_countdown(countdown_duration=15)
+                first_call = False
+            if (self.get_condition_object(jsonDict, 'round', 'phase', 'live')):  # freeze-time is over or heartbeat is sent
+                self.disp_start_countdown(countdown_duration=115)
+                first_call = False
+            print "First json with competitive game data"
+
+
     def do_GET(self):
         SimpleHTTPServer.SimpleHTTPRequestHandler.do_GET(self)
 
@@ -137,9 +160,11 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers["Content-Length"])
         jsonString = str(self.rfile.read(length))
-        #print jsonString
+        # print jsonString
         print "---"
         jsonDict = json.loads(jsonString)
+
+       # self.on_first_run(jsonString)
 
         self.update_team_scores(jsonDict)
 
@@ -147,27 +172,38 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
             self.disp_start_countdown()
             print " AT FREEZE TIME - CT:%d | T:%d" % (self.score_ct, self.score_t)
 
+
         # This will notify you when freezetime is over
         if self.freezetime_over(jsonDict):
+            self.disp_start_countdown(countdown_duration=115)
             print "PICK UP YOUR WEAPONS AND FIGHT!"
 
+
         if self.player_got_kill(jsonDict):
+            self.disp_got_kill()
             print 'YOU GOT A KILL, # of enemies killed this round: ', self.round_kills
 
         if self.bomb_planted(jsonDict):
+            self.disp_bomb_planted()
             print "BOMB HAS BEEN PLANTED!"
+
+
 
         # round over event will occur on the following cases:
         # (round time ran out, bomb defused, bomb exploded, all ct killed, all t killed)
         # all of the events below are nested in order to get greater efficiency in code you can call all of the methods independently as well
         if self.round_over(jsonDict):
             if self.bomb_defused(jsonDict):
+                self.disp_score(score_ct=self.score_ct + 1, score_t=self.score_t)
                 print "CT DEFUSED THE BOMB"
             elif self.bomb_exploded(jsonDict):
+                self.disp_score(score_ct=self.score_ct, score_t=self.score_t + 1)
                 print "T DETONATED THE BOMB"
             elif self.ct_win(jsonDict):
+                self.disp_score(score_ct=self.score_ct + 1, score_t=self.score_t)
                 print "CT SHOT ALL THE T OR TIME RAN OUT"
             elif self.t_win(jsonDict):  # elif is used for some efficiency
+                self.disp_score(score_ct=self.score_ct, score_t=self.score_t + 1)
                 print "T SHOT ALL THE CT"
 
         # Sends a response to your game, this is required
@@ -179,7 +215,7 @@ class ServerHandler(SimpleHTTPServer.SimpleHTTPRequestHandler):
 
 
 Handler = ServerHandler
-####ser = serial.Serial('COM3')
+ser = serial.Serial('COM3')
 # Set up our handler for ctrl+c
 signal.signal(signal.SIGINT, signal_handler)
 
