@@ -16,11 +16,10 @@ This was run on python 2.7, it can probably run on python 3.X with some slight m
 
 ## Arduino code & Hardware
 This harware uses five 74HC595 shift registers in daisy chain confirguration.
- * 595's don't controll seven segment displays directly because 7 seg displays have high current consumption, therefore Q0,Q1..Q3 outputs of 74hc595 use an extra BCD to 7-segment display chip called HEF4543
+ * 595's don't control seven segment displays directly because 7 seg displays have high current consumption, therefore Q0,Q1..Q3 outputs of 74hc595 use an extra BCD to 7-segment display chip called HEF4543
  * Using HEF4543 only lets me to use numeric combinations on 7-seg displays, therefore I'm limited in using only digits. 
  * Two important features about the HEF4543 are: 
  * first it will display 0 if BCD inputs are all low
  * second it will display blank 7-segments if value >9 is at BCD inputs
- * ******************************
  * Arduino also uses ds3231 RTC timer chip for displaying time when CSGO is not launched
 
